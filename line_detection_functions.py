@@ -8,17 +8,22 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from skimage.transform import (hough_line, hough_line_peaks, probabilistic_hough_line)
+from shapely.geometry import Point, LineString
+import glob
 
 #input paths
 
-vect_path = './results/12_CisternNorth_DF_only_t50.shp'
-points_path = './results/12_CisternNorth_DF_only_t50_centroids.shp'
+complete_polygons = './inputs/sample_results_polygons_complete_61983.shp'
 
-template_path = './orthos/12_CisternNorth_12062022_ortho_2in.tif'
-rasterized_path = './rasters/gtiff/12_CisternNorth_DF_only_t50_2in.tif'
+complete_centroids = './inputs/sample_results_polygons_complete_61983_centroids.shp'
+subset_centroids = './inputs/sample_results_centroids_subset_19521.shp'
+mini_centroids = './inputs/sample_results_centroids_subset_1382.shp'
 
-base_path = './rasters/gtiff/'
-new_path = "./rasters/jpgs/"
+template_path = './inputs/12_CisternNorth_12062022_ortho_2in.tif'
+rasterized_path = './outputs/12_CisternNorth_DF_only_t50_2in.tif'
+
+base_path = './inputs/'
+new_path = "./outputs/"
 
 #change crs to utm for measuring distances and compute centroids
 def polys_to_centroids(vect, write = False):
@@ -57,8 +62,6 @@ def points_to_raster(points, inraster, outpath):
 
         burned = features.rasterize(shapes=shapes, fill=0, out=out_arr, transform=out.transform)
         out.write_band(1, burned)
-        out.write_band(2, burned)
-        out.write_band(3, burned)
 
         out.close()
         return
@@ -74,13 +77,37 @@ def tif_to_jpg(tifdir, jpgdir):
         cv2.imwrite(jpgdir+outfile,read,[int(cv2.IMWRITE_JPEG_QUALITY), 200])
 
 
+#Filter points by categorical variable and create new file for each
+def split_categorical_vector(vect):
+    gdf = gpd.read_file(vect)
+    cohorts = gdf['cohort'].unique()
+
+    print(len(gdf))
+
+    for cohort in cohorts:
+
+        new_gdf = gdf[gdf.cohort == cohort]
+
+        outfilename = f'./outputs/cohorts/{cohort}.shp'
+
+        new_gdf.to_file(outfilename)
+
+
 
 #Straight Line Hough Transform
-#takes in filepath to points shapefile UTM 
+#takes in path to points shapefile 
+def straight_HT(points, multiplier = 1):
 
-def straight_HT(pointsdir, multiplier = 1):
+    if isinstance(points, str):
 
-    pts = gpd.read_file(pointsdir).geometry
+        gdf_input = gpd.read_file(points)
+ 
+        pts = gdf_input.geometry
+        cohort = gdf_input['cohort'][0]
+        print(cohort)
+    else:
+        print('the path should point to a folder with shapefiles for each cohort')
+        return
 
     pts = pts.to_crs('epsg:26910')
 
@@ -97,39 +124,9 @@ def straight_HT(pointsdir, multiplier = 1):
 
     image[indices[:,0], indices[:,1]] = 1
 
-    # plt.xlim(0, np.max(b))
-    # plt.ylim(0, np.max(a))
-    # plt.imshow(image)
-    # plt.show()
-
     # Classic straight-line Hough transform
     tested_angles = np.linspace(-np.pi / 2, np.pi / 2, 180 * multiplier, endpoint=False)
     h, theta, d = hough_line(image, theta=tested_angles)
-
-    i = len(h)
-    k=0
-    l=0
-
-    #print(len(h[0]))
-    for line in h:
-        if sum(line) == 0:
-            k = k + 1
-        if sum(line) > 0:
-            # print('index = ' + str(k))
-            # print('sum = ' + str(sum(line)))
-            # print('distance = ' + str(d[k]))
-            l = l + 1
-    
-    # print(f'Total number of angles tested: ' + str(len(theta)))
-
-
-
-    # print('number of zero arrays: ' + str(k))
-    # print('number of non-zero arrays: ' + str(l))
-    # print('length of distances: ' + str(len(d)))
-
-
-    #print(d[0])
 
     # Generating figure
     fig, axes = plt.subplots(1, 3, figsize=(15, 6))
@@ -153,36 +150,106 @@ def straight_HT(pointsdir, multiplier = 1):
 
     h2, t2, d2 = hough_line_peaks(h, theta, d)
 
-    print(t2)
-
     peak_angles = len(t2)
+
+    pointlist = []
+    res_gdf = gpd.GeoDataFrame()
 
     for _, angle, dist in zip(*hough_line_peaks(h, theta, d)):
         y0 = (dist - 0 * np.cos(angle)) / np.sin(angle)
+        
         y1 = (dist - image.shape[1] * np.cos(angle)) / np.sin(angle)
+
         ax[2].plot((0, image.shape[1]), (y0, y1), '-r')
+
+
+        x0 = (0 / 10 + np.min(pts.x)) 
+        x1 = (image.shape[1] / 10) + np.min(pts.x)
+
+        y0 = (y0 / 10 + np.min(pts.y))
+        y1 = (y1 / 10 + np.min(pts.y)) 
+
+        p0 = (x0, y0)
+        p1 = (x1, y1)
+
+        #print(f'the first value is {p0} and the second is {p1}')
+
+        pointlist.append((p0,p1))
+
     
+    for point_pair in pointlist:
+        lineSTR = LineString([Point(point_pair[0]), Point(point_pair[1])])
+        gdf = gpd.GeoDataFrame(index=[0], crs="epsg:26910", geometry=[lineSTR])
+        res_gdf = res_gdf.append(gdf)
+
+    res_gdf['cohort'] = cohort
+
+    outname = points.split('.')[1].split('/')[-1]
+
+    print(outname)
     
+    res_gdf.to_file(f'./outputs/hough/hough_lines_{outname}.shp', crs=26910, driver='ESRI Shapefile')
+
     
+
+    #ax[2].plot((x0, x1), (y0, y1), '-b')
+
     # ax[2].set_xlim((0, image.shape[1]))
     # ax[2].set_ylim((image.shape[0], 0))
+    #ax[2].set_axis_off()
     ax[2].set_xlim(0, np.max(b))
     ax[2].set_ylim(0, np.max(a))
-    #ax[2].set_axis_off()
+
     ax[2].set_title('Detected lines = ' + str(peak_angles))
 
-    plt.tight_layout()
-    plt.show()
+    # plt.tight_layout()
+    # plt.show()
 
-    print(f'Total number of lines (rows): ' + str(peak_angles))
+    print('Total number of lines: ' + str(peak_angles))
 
-#centroids = polys_to_centroids(vect_path, write=False)
+#centroids = polys_to_centroids(complete_polygons, write=True)
 
 #points_to_raster(centroids, template_path, rasterized_path)
 
 #tif_to_jpg(base_path, new_path)
 
-straight_HT('./results/12_CisternNorth_centroids_subset_mini.shp', multiplier=10)
+#straight_HT(mini_centroids, multiplier=10)
 
-#straight_HT('./results/12_CisternNorth_DF_only_t50_centroids.shp', multiplier=12)
+#straight_HT(centroids, multiplier=7)
+
+
+
+split_categorical_vector(complete_centroids)
+
+
+# absolute path to search all text files inside a specific folder
+path = r'./outputs/cohorts/*.shp'
+files = glob.glob(path)
+
+for file in files:
+    straight_HT(file, multiplier=12)
+
+path2 = r'./outputs/hough/*.shp'
+files2 = glob.glob(path2)
+
+merged = gpd.read_file(files2[0])
+
+for file in files2[1:]:
+    next = gpd.read_file(file)
+    merged = gpd.pd.concat([merged, next])
+
+merged.to_file('./outputs/hough_lines_merged.shp')
+
+mypath = "my_folder" #Enter your path here
+
+#clear out folders in outputs
+for i in ['./outputs/cohorts', './outputs/hough']:
+    for root, dirs, files in os.walk(i, topdown=False):
+        for file in files:
+            os.remove(os.path.join(root, file))
+
+        # Add this block to remove folders
+        for dir in dirs:
+            os.rmdir(os.path.join(root, dir))
+
 
