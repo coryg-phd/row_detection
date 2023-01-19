@@ -10,8 +10,11 @@ from matplotlib import cm
 from skimage.transform import (hough_line, hough_line_peaks, probabilistic_hough_line)
 from shapely.geometry import Point, LineString
 import glob
+import math
 
 #input paths
+
+single_model_result = './inputs/14_Dudley_12152022_results_t50.shp'
 
 complete_polygons = './inputs/sample_results_polygons_complete_61983.shp'
 
@@ -43,7 +46,6 @@ def polys_to_centroids(vect, write = False):
     return treepoints
 
 
-
 #rasterize points using ortho for reference  
 #points are points gdf and rasters are full file paths
 def points_to_raster(points, inraster, outpath):
@@ -65,7 +67,6 @@ def points_to_raster(points, inraster, outpath):
 
         out.close()
         return
-
 
 
 #convert all tif in folder to jpegs for opencv
@@ -92,6 +93,8 @@ def split_categorical_vector(vect):
 
         new_gdf.to_file(outfilename)
 
+#primary Hough Transform to derive angles of majority of rows
+
 
 
 #Straight Line Hough Transform
@@ -103,7 +106,10 @@ def straight_HT(points, multiplier = 1):
         gdf_input = gpd.read_file(points)
  
         pts = gdf_input.geometry
-        cohort = gdf_input['cohort'][0]
+        if gdf_input.columns.isin(['cohort']).any():
+                cohort = gdf_input['cohort'][0]
+        else:
+            cohort=''
         print(cohort)
     else:
         print('the path should point to a folder with shapefiles for each cohort')
@@ -125,7 +131,8 @@ def straight_HT(points, multiplier = 1):
     image[indices[:,0], indices[:,1]] = 1
 
     # Classic straight-line Hough transform
-    tested_angles = np.linspace(-np.pi / 2, np.pi / 2, 180 * multiplier, endpoint=False)
+    #tested_angles = np.linspace(-np.pi / 2, np.pi / 2, 180 * multiplier, endpoint=False)
+    tested_angles = np.linspace((-np.pi / 12), (np.pi / 12), 30 * multiplier, endpoint=False)
     h, theta, d = hough_line(image, theta=tested_angles)
 
     # Generating figure
@@ -167,7 +174,12 @@ def straight_HT(points, multiplier = 1):
         x1 = (image.shape[1] / 10) + np.min(pts.x)
 
         y0 = (y0 / 10 + np.min(pts.y))
-        y1 = (y1 / 10 + np.min(pts.y)) 
+        if math.isinf(y0):
+            y0 = image.shape[0]
+        
+        y1 = (y1 / 10 + np.min(pts.y))
+        if math.isinf(y1):
+            y1 = 0
 
         p0 = (x0, y0)
         p1 = (x1, y1)
@@ -190,8 +202,6 @@ def straight_HT(points, multiplier = 1):
     
     res_gdf.to_file(f'./outputs/hough/hough_lines_{outname}.shp', crs=26910, driver='ESRI Shapefile')
 
-    
-
     #ax[2].plot((x0, x1), (y0, y1), '-b')
 
     # ax[2].set_xlim((0, image.shape[1]))
@@ -202,12 +212,12 @@ def straight_HT(points, multiplier = 1):
 
     ax[2].set_title('Detected lines = ' + str(peak_angles))
 
-    # plt.tight_layout()
-    # plt.show()
+    plt.tight_layout()
+    plt.show()
 
     print('Total number of lines: ' + str(peak_angles))
 
-#centroids = polys_to_centroids(complete_polygons, write=True)
+#centroids = polys_to_centroids(single_model_result, write=True)
 
 #points_to_raster(centroids, template_path, rasterized_path)
 
@@ -215,19 +225,16 @@ def straight_HT(points, multiplier = 1):
 
 #straight_HT(mini_centroids, multiplier=10)
 
-#straight_HT(centroids, multiplier=7)
+#straight_HT('./inputs/23_Middle_results_t50_centroids.shp', multiplier=12)
 
-
-
-split_categorical_vector(complete_centroids)
-
+split_categorical_vector('./inputs/14_Dudley_12152022_results_t50_centroids.shp')
 
 # absolute path to search all text files inside a specific folder
 path = r'./outputs/cohorts/*.shp'
 files = glob.glob(path)
 
 for file in files:
-    straight_HT(file, multiplier=12)
+    straight_HT(file, multiplier=50)
 
 path2 = r'./outputs/hough/*.shp'
 files2 = glob.glob(path2)
@@ -251,5 +258,3 @@ for i in ['./outputs/cohorts', './outputs/hough']:
         # Add this block to remove folders
         for dir in dirs:
             os.rmdir(os.path.join(root, dir))
-
-
